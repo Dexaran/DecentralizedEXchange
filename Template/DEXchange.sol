@@ -160,28 +160,47 @@ contract DecentralizedEXchange {
         _;
     }
     
+    //mapping address(wallet) => address(token) => balance(tokens)
+    mapping (address => mapping (address=>uint)) tokenBalances;
+    mapping (address => uint) etherBalances;
     
-    mapping (uint => Market) market;
+    
+    
+    mapping (uint => Market) public market;
     uint lastMarketId=0;
     struct Market{
         address contractAddress;
         uint decimals;
-        uint lastAsk_id;
-        uint lastBid_id;
-        Trade[] ask;
-        Trade[] bid;
+        
+        mapping (uint => Trade) ask;
+        mapping (uint => Trade) bid;
         
         uint lowestAsk;  //ask is a price in ETC on lowest SELL order
         uint highestBid;  //bid is a price in ETC on highest BUY order
+        
+        uint lowestAsk_id; //an identifier of lowest ask in mapping
+        uint highestBid_id; //an identifier of highest bid in mapping
+        
+        uint askLength; //a number of active asks
+        uint bidLength; //a number of active bids
+        
+        uint ask_index;  //incrementing variable to give each new ask unique ID
+        uint bid_index;  //incrementing variable to give each new bid unique ID
     }
     
     struct Trade{
+        
+        /*           List-like structure to keep orders              */
+        
         address owner;
+        
         //here PRICE will be an amount of tokens you want to buy per 1 ETC
         //here 1 ETC = 1000000000000000000
+        //here 1 BEC = 100000000
         uint price;
         uint amount;
-      //  uint id;   //Array identifier will be used instead
+        uint id;   //analogue of array index identifier
+      
         uint prev_id;
         uint next_id;
     }
@@ -193,67 +212,320 @@ contract DecentralizedEXchange {
   
   address public owner;
   
-  function sellToken(uint _marketId, uint _price, uint _amount) returns (bool ok)
+  function getTrade(uint _marketId, uint _tradeId) constant returns (uint price)
   {
+      uint i=0;
+      while(market[_marketId].ask[i].id!=market[_marketId].ask[_tradeId].id)
+      {
+          i++;
+      }
+      return market[_marketId].ask[i].price;
+  }
+  
+  
+  //Create BID or fill already existing ASK orders
+  function buyToken(uint _marketId, uint _price, uint _amount) returns (bool ok) {
+      
+      //if amount * token price <= etherBalances[msg.sender[market[_marketId].contractAddress]]
+     if(_price<market[_marketId].lowestAsk)
+     {
+         //if we dont need to fill ASK orders then we need to place a BUY order
+         if(placeOrder(_marketId, msg.sender, _price, _amount, false))
+         {
+             return true;
+         }
+     }
+     else
+     {
+         //We need to fill closest orders first
+         //then place a new BID order if we want to buy more than sell orders can cover
+         
+         uint j=market[_marketId].lowestAsk_id;
+         while(_price>market[_marketId].ask[j].price)
+         {
+             if(_amount<=market[_marketId].ask[j].amount){
+                 //we can partially fill given order
+                 tokenBalances[msg.sender][market[_marketId].contractAddress]+=_amount;
+                 etherBalances[market[_marketId].ask[j].owner]+=(_amount*market[_marketId].ask[j].price)*(1000000000000000000/10**market[_marketId].decimals);
+                 market[_marketId].ask[j].amount-=_amount;
+                 _amount=0;
+                 return true;
+             }
+             else{
+                 //we can fully fill given order and then need to dispose it
+                 tokenBalances[msg.sender][market[_marketId].contractAddress]+=market[_marketId].bid[j].amount;
+                 etherBalances[market[_marketId].bid[j].owner]+=(_amount*market[_marketId].bid[j].price)*(1000000000000000000/10**market[_marketId].decimals);
+                 _amount-=market[_marketId].bid[j].amount;
+                 deleteOrder(_marketId, j, true);
+             }
+         }
+         //if(_amount>0)
+         //if we filled all given orders but still want to buy more tokens at the given price
+         placeOrder(_marketId, msg.sender, _price, _amount, false);
+     }
+     return true;
+  }
+  
+  //Create ASK or fill already existing BID orders
+  function sellToken(uint _marketId, uint _price, uint _amount) returns (bool ok){
+      
+      //if tokenBalances[msg.sender[market[_marketId].contractAddress]]>= _price * _amount
      if(_price>market[_marketId].highestBid)
      {
          //if we dont need to fill BUY orders then we need to place a SELL order
-         if(_price<market[_marketId].lowestAsk)
+         if(placeOrder(_marketId, msg.sender, _price, _amount, true))
          {
-             //if we are going to place the lowest ASK
-             market[_marketId].lowestAsk=_price;
-             Trade newTrade;
-             newTrade.owner=msg.sender;
-             newTrade.price=_price;
-             newTrade.amount=_amount;
-             newTrade.prev_id=market[_marketId].lastAsk_id;
-             market[_marketId].ask[market[_marketId].lastAsk_id].next_id=market[_marketId].ask.length-1;
-             market[_marketId].ask.push(newTrade);
              return true;
          }
-         //if our ASK will be not in the end of ask array
-         uint i=market[_marketId].lastAsk_id;
-         while(_price>market[_marketId].ask[i].price)
+     }
+     else
+     {
+         //We need to fill closest orders first
+         //then place a new ASK order if we want to sell more than buy orders can cover
+         
+         uint j=market[_marketId].highestBid_id;
+         while(_price<market[_marketId].bid[j].price)
+         {
+             if(_amount<=market[_marketId].bid[j].amount){
+                 //we can partially fill given order
+                 tokenBalances[market[_marketId].bid[j].owner][market[_marketId].contractAddress]+=_amount;
+                 etherBalances[msg.sender]+=(_amount*market[_marketId].bid[j].price)*(1000000000000000000/10**market[_marketId].decimals);
+                 market[_marketId].bid[j].amount-=_amount;
+                 _amount=0;
+                 return true;
+             }
+             else{
+                 //we can fully fill given order and then need to dispose it
+                 tokenBalances[market[_marketId].bid[j].owner][market[_marketId].contractAddress]+=market[_marketId].bid[j].amount;
+                 etherBalances[msg.sender]+=(_amount*market[_marketId].bid[j].price)*(1000000000000000000/10**market[_marketId].decimals);
+                 _amount-=market[_marketId].bid[j].amount;
+                 deleteOrder(_marketId, j, false);
+             }
+         }
+         //if(_amount>0)
+         //if we filled all given orders but still want to buy more tokens at the given price
+         placeOrder(_marketId, msg.sender, _price, _amount, true);
+     }
+     return true;
+  }
+  
+  
+  //placeOrder(market, user, price, amount, bid/ask);
+  //false = bid
+  //true = ask
+  
+  function deleteOrder(uint _marketId, uint _orderId, bool _ask) private returns (bool ok)
+  {
+      if(_ask)
+      {
+        market[_marketId].ask[market[_marketId].ask[_orderId].prev_id].next_id=market[_marketId].ask[_orderId].next_id;
+        market[_marketId].ask[market[_marketId].ask[_orderId].next_id].prev_id=market[_marketId].ask[_orderId].prev_id;
+        market[_marketId].askLength--;
+      }
+      else
+      {
+        market[_marketId].bid[market[_marketId].bid[_orderId].prev_id].next_id=market[_marketId].bid[_orderId].next_id;
+        market[_marketId].bid[market[_marketId].bid[_orderId].next_id].prev_id=market[_marketId].bid[_orderId].prev_id;
+        market[_marketId].bidLength--;
+      }
+      return true;
+  }
+  
+  function placeOrder(uint _marketId, address _owner, uint _price, uint _amount, bool _ask) private returns (bool ok)
+  {
+         //prepare a new trade order to be added with given params
+        Trade newTrade;
+        newTrade.owner=_owner;
+        newTrade.price=_price;
+        newTrade.amount=_amount;
+      
+      //If we're placing ASK order
+      if(_ask)
+      {
+        
+        if(_price<market[_marketId].lowestAsk)
+         {
+             //if we are going to place the lowest ASK
+            market[_marketId].lowestAsk=_price;
+            if(market[_marketId].askLength==0)
+            {
+                market[_marketId].ask[0]=newTrade;
+                market[_marketId].askLength++;
+                market[_marketId].ask_index++;
+                return true;
+            }
+            newTrade.prev_id=market[_marketId].lowestAsk_id;
+            newTrade.id=market[_marketId].ask_index;
+            market[_marketId].ask[market[_marketId].lowestAsk_id].next_id=newTrade.id;
+            market[_marketId].ask[market[_marketId].ask_index]=newTrade;
+            market[_marketId].askLength++;
+            market[_marketId].ask_index++;
+             
+            market[_marketId].lowestAsk_id=newTrade.id;
+            market[_marketId].lowestAsk=newTrade.price;
+            return true;
+         }
+         //if our ASK will be not in the end of ask list
+         uint i=market[_marketId].lowestAsk_id;
+         while(_price<market[_marketId].ask[i].price)
          {
              if(i==0)
              {
-                 return true;
+                 delete(i);
+                 //Error occures
+                 return false;
              }
              i=market[_marketId].ask[i].prev_id;
          }
-     }
-  }
-  
-  function buyToken(uint _marketId, uint _price, uint _amount)
-  {
+             newTrade.prev_id=market[_marketId].ask[i].id;
+             newTrade.next_id=market[_marketId].ask[i].next_id;
+             market[_marketId].ask[i].next_id=newTrade.id;
+             market[_marketId].ask[market[_marketId].ask[i].next_id].prev_id=newTrade.id;
+             delete(i);
+             //new trade is now added
+             return true;
+      }
       
-  }
-  
-  function addMarket(address _address, uint _decimals) onlyOwner{
+      
+      //If we are gonna place BID order
+      else{
+          
+        if(_price<market[_marketId].lowestAsk)
+        {
+             //if we are going to place the lowest ASK
+            market[_marketId].highestBid=_price;
+            if(market[_marketId].bidLength==0)
+            {
+                market[_marketId].bid[0]=newTrade;
+                market[_marketId].bidLength++;
+                market[_marketId].bid_index++;
+                return true;
+            }
+            newTrade.prev_id=market[_marketId].highestBid_id;
+            newTrade.id=market[_marketId].bidLength;
+            market[_marketId].bid[market[_marketId].highestBid_id].next_id=newTrade.id;
+            
+            market[_marketId].highestBid_id=newTrade.id;
+            market[_marketId].bid[market[_marketId].bid_index]=newTrade;
+            market[_marketId].bid_index++;
+            market[_marketId].bidLength++;
+            market[_marketId].highestBid=newTrade.price;
+            return true;
+        }
+        uint j=market[_marketId].highestBid_id;
+        while(_price>market[_marketId].bid[j].price)
+        {
+            if(j==0)
+            {
+                 delete(j);
+                 //Error occures
+                 return false;
+            }
+            j=market[_marketId].bid[j].prev_id;
+        }
+        
+        newTrade.prev_id=market[_marketId].bid[j].id;
+        newTrade.next_id=market[_marketId].bid[j].next_id;
+        market[_marketId].bid[j].next_id=newTrade.id;
+        market[_marketId].bid[market[_marketId].bid[j].next_id].prev_id=newTrade.id;
+            
+        delete(j);
+        //new trade is now added
+        return true;
+        }
+    }
+    
+    
+    function depositEther() payable
+    {
+        etherBalances[msg.sender]+=msg.value;
+        
+    }
+    
+    
+    function depositToken(address _tokenContract, uint _amount)
+    {
+        ERC23Asset asset = ERC23Asset(_tokenContract);
+        if(asset.transferFrom(msg.sender, address(this), _amount))
+        {
+            tokenBalances[msg.sender][_tokenContract]+=_amount;
+        }
+    }
+    
+    function tokenFallback(address _from, uint _amount, bytes _data)
+    {
+        
+        if(_data[0]=='1')
+        {
+            for (uint i=0; i<lastMarketId; i++)
+            {
+                if((market[i].contractAddress==msg.sender)&&(_amount>0))
+                {
+  //placeOrder(market, user, price, amount, bid/ask);
+  //false = bid
+  //true = ask
+                    placeOrder(i, _from, market[i].lowestAsk, _amount, true);
+                }
+            }
+        }
+        
+        if(_data[0]=='0')
+        {
+            for (uint j=0; j<lastMarketId; j++)
+            {
+                if((market[j].contractAddress==msg.sender)&&(_amount>0))
+                {
+                    placeOrder(j, _from, market[j].highestBid, _amount, false);
+                }
+            }
+        }
+        
+        if(_data.length==0)
+        {
+            tokenBalances[_from][msg.sender]+=_amount;
+        }
+        throw;
+    }
+    
+    function withdrawEther(uint _amount)
+    {
+        if(etherBalances[msg.sender]>=_amount)
+        {
+            if(msg.sender.send(_amount))
+            {
+                etherBalances[msg.sender]-=_amount;
+            }
+        }
+    }
+    
+    function withdrawToken(address _tokenContract, uint _amount)
+    {
+        if(tokenBalances[msg.sender][_tokenContract]>=_amount)
+        {
+            ERC23Asset asset = ERC23Asset(_tokenContract);
+            if(asset.transfer(msg.sender, _amount))
+            {
+                tokenBalances[msg.sender][_tokenContract]-=_amount;
+            }
+        }
+    }
+    
+  function addMarket(address _address, uint _decimals) {//onlyOwner
       Market newMarket;
       newMarket.contractAddress=_address;
       newMarket.decimals=_decimals;
       newMarket.lowestAsk=0;
       newMarket.highestBid=0;
-      newMarket.lastAsk_id=0;
-      newMarket.lastBid_id=0;
+      newMarket.lowestAsk_id=0;
+      newMarket.highestBid_id=0;
       
       //empty trade for later compare
-      Trade tmp;
-      tmp.owner=0x0;
-      tmp.price=0;
-      tmp.amount=0;
       
-      newMarket.ask.push(tmp);
-      newMarket.bid.push(tmp);
+      newMarket.askLength=0;
+      newMarket.bidLength=0;
       
-      market[lastMarketId+1]=newMarket;
+      market[lastMarketId]=newMarket;
       lastMarketId++;
-  }
-  
-  function() payable
-  {
-      
   }
   
   function donate() payable{
@@ -264,5 +536,4 @@ contract DecentralizedEXchange {
   {
       msg.sender.send(_amount);
   }
-  
 }
