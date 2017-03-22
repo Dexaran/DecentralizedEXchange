@@ -4,7 +4,7 @@ Exchange consists of 3 contracts and SafeMath library.
 
 ### Master-contract
 Is throwing events and contains orders mapping and supported tokens mapping.
-Places new BID or ASK contracts.
+Places new BID or ASK contracts when executed.
 
 ### Bid
 A single BID contract.
