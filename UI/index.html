@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>DEXchange</title>
+
+    <script>
+    function doSomething()
+    {
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', "http://faucet.ropsten.be:3001/donate/" + address, true);
+        xhr.send();
+        var response = JSON.parse(xhr.responseText);
+        alert(response);
+    }
+
+
+    function myFunction()
+    {
+        //var address = '0x146960EA8D73d997Aa55Cb73b5a8EB6C21d6e79a';
+
+        var hexAddres = document.getElementById('hex_Addr');
+        var address=hexAddres.value.toString();
+        //var address="0x687422eea2cb73b5d3e242ba5456b782919afc85";
+        var address_BIG=address.toUpperCase();
+        address_arr=address_BIG.split('');
+
+
+        //for (var v=0; v<address_arr.length; v++)
+        //{
+        //    address_arr[v]=address_arr[v].toLowerCase();
+        for(var j=0; j<address_arr.length;j++)
+        {
+            address_arr[j]=address_arr[j].toLowerCase();
+        for(var i=0; i<address_arr.length;i++)
+        {
+            address_arr[i]=address_arr[i].toLowerCase();
+            var reqi=address_arr.join("");
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', "http://faucet.ropsten.be:3001/donate/" + reqi, true);
+            xhr.send();
+
+            if(i!=j)
+                {
+                    address_arr[i]=address_arr[i].toUpperCase();
+                }
+        }
+    }
+//}
+    }
+    </script>
+
+</head>
+<body>
+
+<div class="container">
+
+    <h3>TMP Exchange Interface Center <i id="loading" class="fa fa-circle-o-notch fa-spin"></i></h3>
+
+    <hr>
+
+    <h4>Stats</h4>
+    <br>
+
+    <hr>
+
+    <h4> <button onclick="myFunction()">test1</button>
+        </h4>
+
+<input type="text" name="enter" class="enter" value="" id="hex_Addr"/>
+</div>
+
+</body>
+</html>
